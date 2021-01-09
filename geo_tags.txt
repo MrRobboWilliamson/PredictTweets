@@ -1,0 +1,30 @@
+REGISTER 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020/user/hdfs/json-simple-1.1.jar';
+REGISTER 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020//user/hdfs/elephant-bird-hadoop-compat-4.1.jar';
+REGISTER 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020//user/hdfs/elephant-bird-pig-4.1.jar';
+
+-- this is just one day, there is a bunch more data, once the script is working well
+tweets_all = LOAD '/data/ProjectDataset/statuses.log.2014*' USING com.twitter.elephantbird.pig.load.JsonLoader('-nestedLoad') AS (json:map[]);
+
+-- to get the geo locations of tweets and get the hashtags
+tweets_all = FOREACH tweets_all GENERATE FLATTEN(json#'created_at') as time_stamp, FLATTEN(json#'id') as id, FLATTEN(json#'coordinates') as (coords:map[]), FLATTEN(json#'place') as (place:map[]), FLATTEN(json#'entities') as (hash:map[]);
+
+-- ensure that we remove duplicates
+tweets = DISTINCT tweets_all;
+
+-- now we can filter for tweets with geo tags
+filtered = FILTER tweets BY (coords IS NOT NULL) OR (place IS NOT NULL);
+
+-- parse the date time and unpack the geo data and hashtags
+locs1 = foreach filtered generate coords#'coordinates' as coordinates:chararray, FLATTEN(place#'bounding_box') as (bbox:map[]), ToDate(time_stamp, 'EEE MMM dd HH:mm:ss Z yyyy') as time_stamp, FLATTEN(hash#'hashtags') as (tags:map[]), id as id;
+
+-- unpack the hashtags and bounding box coordinates
+locs2 = foreach locs1 generate id, time_stamp, coordinates, FLATTEN(bbox#'coordinates') as bbox_coords:chararray, FLATTEN(tags#'text') as text;
+
+-- group by id and throw the hashtags into a tuple
+grpd = GROUP locs2 BY (id, time_stamp, coordinates, bbox_coords);
+locs3 = foreach grpd generate FLATTEN(group) as (id, time_stamp, coordinates, bbox_coords), TOTUPLE(locs2.text);
+
+-- dump the filtered data and count the number of records
+STORE locs3 INTO 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020/user/s4575121/project_output/geo_hash-2' USING PigStorage('|');
+
+

@@ -1,0 +1,28 @@
+REGISTER 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020/user/hdfs/json-simple-1.1.jar';
+REGISTER 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020//user/hdfs/elephant-bird-hadoop-compat-4.1.jar';
+REGISTER 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020//user/hdfs/elephant-bird-pig-4.1.jar';
+
+-- this is just one day, there is a bunch more data, once the script is working well
+tweets_all = LOAD '/data/ProjectDataset/statuses.log.2014*' USING com.twitter.elephantbird.pig.load.JsonLoader('-nestedLoad') AS (json:map[]);
+
+-- get the time from the tweets
+tweets_all = FOREACH tweets_all GENERATE FLATTEN(json#'created_at') as time_stamp, FLATTEN(json#'id') as id;
+
+-- ensure that we remove duplicates
+tweets = DISTINCT tweets_all;
+
+-- parse the date time
+time_stamps1 = foreach tweets generate ToDate(time_stamp, 'EEE MMM dd HH:mm:ss Z yyyy') as time_stamp:DateTime, id as id;
+
+-- just get the date from the datetime
+time_stamps2 = foreach time_stamps1 generate id, CONCAT((chararray)GetYear(time_stamp),'-',(chararray)GetMonth(time_stamp),'-',(chararray)GetDay(time_stamp)) as date_string:chararray;
+
+-- group by the date and count
+by_date = group time_stamps2 by date_string;
+
+-- count the number of records on each day
+daily_count = foreach by_date generate Flatten(group) as day:chararray, COUNT(time_stamps2) as num_tweets:int;
+
+-- dump the filtered data and count the number of records
+STORE daily_count INTO 'hdfs://data7201-node1.fabric.zones.eait.uq.edu.au:8020/user/s4575121/project_output/counts_by_day-1' USING PigStorage('|');
+
